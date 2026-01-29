@@ -1,0 +1,27 @@
+{
+  "name": "Gold Converter VN - Chuyển đổi Giá Vàng",
+  "short_name": "Gold VN",
+  "description": "Công cụ chuyển đổi giá vàng Real-time (Quốc tế - Việt Nam)",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#f59e0b",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "utilities"],
+  "lang": "vi-VN",
+  "dir": "ltr"
+}
