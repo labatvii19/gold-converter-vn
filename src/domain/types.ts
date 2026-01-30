@@ -1,6 +1,7 @@
 import { Decimal } from 'decimal.js';
 
 export type CurrencyCode = 'USD' | 'VND';
+export type TimeRange = '1W' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'All';
 
 export interface GoldPriceWorld {
     amount: Decimal;

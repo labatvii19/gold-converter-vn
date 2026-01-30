@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useTransition } from 'react';
-import { fetchMarketData, MarketData } from '@/app/actions';
+import { fetchMarketDataV3, MarketData } from '@/app/actions';
 
 interface InputPanelProps {
     worldPrice: string;
@@ -28,7 +28,7 @@ export function InputPanel({
 
     const handleFetchData = () => {
         startTransition(async () => {
-            const data = await fetchMarketData();
+            const data = await fetchMarketDataV3();
             setLiveData(data);
         });
     };
@@ -55,14 +55,14 @@ export function InputPanel({
 
     const handleAutoFill = () => {
         startTransition(async () => {
-            const data = await fetchMarketData();
+            const data = await fetchMarketDataV3();
             setLiveData(data);
 
             // Auto Apply Logic
             if (data.goldPriceUSD) setWorldPrice(data.goldPriceUSD.toString());
             if (data.fxRateVND) setFxRate(data.fxRateVND.toString());
             if (data.domesticPrices && data.domesticPrices.length > 0) {
-                const total = data.domesticPrices.reduce((sum, item) => sum + item.sell, 0);
+                const total = data.domesticPrices.reduce((sum: number, item: any) => sum + item.sell, 0);
                 const avg = total / data.domesticPrices.length;
                 setMarketPrice(avg.toString());
             }
@@ -72,6 +72,24 @@ export function InputPanel({
     const handleManualCalc = () => {
         // Visual feedback only, as effect is reactive.
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    };
+
+    // Number formatting utilities
+    const formatNumber = (value: string): string => {
+        if (!value) return '';
+        const num = parseFloat(value);
+        if (isNaN(num)) return value;
+        return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(num);
+    };
+
+    const parseNumber = (formatted: string): string => {
+        return formatted.replace(/\./g, '').replace(/,/g, '.');
+    };
+
+    const isValidNumber = (value: string): boolean => {
+        if (!value) return true; // Empty is valid (will use defaults)
+        const num = parseFloat(value);
+        return !isNaN(num) && num >= 0;
     };
 
     return (
@@ -129,10 +147,12 @@ export function InputPanel({
                     <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
                         <input
-                            type="number"
-                            value={worldPrice}
-                            onChange={(e) => setWorldPrice(e.target.value)}
-                            className="w-full pl-8 pr-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all"
+                            type="text"
+                            value={formatNumber(worldPrice)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => setWorldPrice(parseNumber(e.target.value))}
+                            className={`w-full pl-8 pr-4 py-2 border dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all ${isValidNumber(worldPrice) ? 'border-slate-300' : 'border-red-500'
+                                }`}
                             placeholder="ví dụ 2000"
                         />
                     </div>
@@ -155,11 +175,13 @@ export function InputPanel({
                     <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">₫</span>
                         <input
-                            type="number"
-                            value={fxRate}
-                            onChange={(e) => setFxRate(e.target.value)}
-                            className="w-full pl-8 pr-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
-                            placeholder="ví dụ 25000"
+                            type="text"
+                            value={formatNumber(fxRate)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => setFxRate(parseNumber(e.target.value))}
+                            className={`w-full pl-8 pr-4 py-2 border dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all ${isValidNumber(fxRate) ? 'border-slate-300' : 'border-red-500'
+                                }`}
+                            placeholder="ví dụ 25.000"
                         />
                     </div>
                 </div>
@@ -194,11 +216,13 @@ export function InputPanel({
                     <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">₫</span>
                         <input
-                            type="number"
-                            value={marketPrice}
-                            onChange={(e) => setMarketPrice(e.target.value)}
-                            className="w-full pl-8 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                            placeholder="ví dụ 70000000"
+                            type="text"
+                            value={formatNumber(marketPrice)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => setMarketPrice(parseNumber(e.target.value))}
+                            className={`w-full pl-8 pr-4 py-2 border dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all ${isValidNumber(marketPrice) ? 'border-slate-300' : 'border-red-500'
+                                }`}
+                            placeholder="ví dụ 70.000.000"
                         />
                     </div>
                 </div>
@@ -213,19 +237,23 @@ export function InputPanel({
                         <div>
                             <label className="block text-xs font-medium text-slate-500 mb-1">Vận chuyển & Bảo hiểm (USD/Ounce)</label>
                             <input
-                                type="number"
-                                value={transportFee}
-                                onChange={(e) => setTransportFee(e.target.value)}
-                                className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-slate-400 outline-none"
+                                type="text"
+                                value={formatNumber(transportFee)}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => setTransportFee(parseNumber(e.target.value))}
+                                className={`w-full px-3 py-1.5 text-sm border rounded focus:ring-1 focus:ring-slate-400 outline-none ${isValidNumber(transportFee) ? 'border-slate-300' : 'border-red-500'
+                                    }`}
                             />
                         </div>
                         <div>
                             <label className="block text-xs font-medium text-slate-500 mb-1">Thuế & Gia công (VND/Lượng)</label>
                             <input
-                                type="number"
-                                value={tax}
-                                onChange={(e) => setTax(e.target.value)}
-                                className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-slate-400 outline-none"
+                                type="text"
+                                value={formatNumber(tax)}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => setTax(parseNumber(e.target.value))}
+                                className={`w-full px-3 py-1.5 text-sm border rounded focus:ring-1 focus:ring-slate-400 outline-none ${isValidNumber(tax) ? 'border-slate-300' : 'border-red-500'
+                                    }`}
                             />
                         </div>
                     </div>

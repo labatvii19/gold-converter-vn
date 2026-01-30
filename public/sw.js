@@ -1,13 +1,14 @@
 // Service Worker for Gold Converter VN PWA
-// Version: 1.0.0
+// Version: 3.0.0 (Clean Slate)
 
-const CACHE_NAME = 'gold-converter-vn-v1';
-const STATIC_CACHE = 'gold-converter-static-v1';
+const CACHE_NAME = 'gold-converter-vn-v3';
+const STATIC_CACHE = 'gold-converter-static-v3';
 
 // URLs to cache on install
 const urlsToCache = [
-    '/',
     '/manifest.json',
+    '/icon-192x192.png',
+    '/icon-512x512.png'
 ];
 
 // Install event - cache static assets
@@ -55,45 +56,43 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
+    // For navigation requests (HTML), use Network First, fallback to cache
+    if (request.mode === 'navigate') {
+        event.respondWith(
+            fetch(request)
+                .then((response) => {
+                    return response;
+                })
+                .catch(() => {
+                    // Start URL for PWA fallback
+                    return caches.match('/')
+                        .then(r => r || new Response('Offline - Service Unavailable', { status: 503 }));
+                })
+        );
+        return;
+    }
+
     event.respondWith(
         caches.match(request)
             .then((response) => {
                 if (response) {
-                    // Cache hit - return cached response
                     return response;
                 }
 
-                // Clone the request
                 const fetchRequest = request.clone();
-
                 return fetch(fetchRequest).then((response) => {
-                    // Check if valid response
                     if (!response || response.status !== 200 || response.type !== 'basic') {
                         return response;
                     }
 
-                    // Clone the response
                     const responseToCache = response.clone();
-
-                    // Cache static assets only (not API calls)
                     if (url.pathname.match(/\.(js|css|png|jpg|jpeg|svg|woff2|woff)$/)) {
                         caches.open(STATIC_CACHE)
                             .then((cache) => {
                                 cache.put(request, responseToCache);
                             });
                     }
-
                     return response;
-                });
-            })
-            .catch(() => {
-                // Offline fallback - could return a custom offline page here
-                return new Response('Offline - please check your connection', {
-                    status: 503,
-                    statusText: 'Service Unavailable',
-                    headers: new Headers({
-                        'Content-Type': 'text/plain',
-                    }),
                 });
             })
     );

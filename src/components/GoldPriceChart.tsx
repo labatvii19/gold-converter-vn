@@ -2,9 +2,8 @@
 
 import React, { useState, useEffect, useTransition } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { fetchHistoricalGoldData, HistoricalDataPoint } from '@/app/actions';
-
-type TimeRange = '1W' | '1M' | '3M' | '6M' | '1Y';
+import { fetchHistoricalGoldDataV3, HistoricalDataPoint } from '@/app/actions';
+import { TimeRange } from '@/domain/types';
 
 interface GoldPriceChartProps {
     visible?: boolean;
@@ -13,18 +12,27 @@ interface GoldPriceChartProps {
 export function GoldPriceChart({ visible = true }: GoldPriceChartProps) {
     const [data, setData] = useState<HistoricalDataPoint[]>([]);
     const [selectedRange, setSelectedRange] = useState<TimeRange>('1M');
+    const [loading, setLoading] = useState(false);
     const [isPending, startTransition] = useTransition();
 
     useEffect(() => {
         if (visible) {
-            loadData(selectedRange);
+            loadData(); // Call loadData without parameter, it will use selectedRange
         }
-    }, [visible, selectedRange]);
+    }, [visible, selectedRange]); // selectedRange is now a dependency
 
-    const loadData = (range: TimeRange) => {
+    const loadData = async () => {
+        setLoading(true); // Start loading
         startTransition(async () => {
-            const historicalData = await fetchHistoricalGoldData(range);
-            setData(historicalData);
+            try {
+                const historicalData = await fetchHistoricalGoldDataV3(selectedRange); // Use selectedRange from state
+                setData(historicalData);
+            } catch (err) {
+                console.error("Failed to fetch historical gold data:", err);
+                // Optionally, set an error state here
+            } finally {
+                setLoading(false); // End loading
+            }
         });
     };
 
@@ -42,12 +50,24 @@ export function GoldPriceChart({ visible = true }: GoldPriceChartProps) {
         timestamp: point.timestamp,
     }));
 
+    // Debug: Log first data point to verify units
+    if (chartData.length > 0) {
+        console.log('[CHART DEBUG] Sample data:', {
+            date: chartData[0].date,
+            goldUSD: chartData[0]['Giá Thế giới (USD)'],
+            domesticVND: chartData[0]['Giá Trong nước (tr.VND)']
+        });
+    }
+
     const timeRanges: { label: string; value: TimeRange }[] = [
         { label: '1 Tuần', value: '1W' },
         { label: '1 Tháng', value: '1M' },
         { label: '3 Tháng', value: '3M' },
         { label: '6 Tháng', value: '6M' },
         { label: '1 Năm', value: '1Y' },
+        { label: '3 Năm', value: '3Y' },
+        { label: '5 Năm', value: '5Y' },
+        { label: 'Tất cả', value: 'All' },
     ];
 
     return (
@@ -65,8 +85,8 @@ export function GoldPriceChart({ visible = true }: GoldPriceChartProps) {
                             onClick={() => handleRangeChange(value)}
                             disabled={isPending}
                             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${selectedRange === value
-                                    ? 'bg-amber-500 dark:bg-amber-600 text-white shadow-md'
-                                    : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
+                                ? 'bg-amber-500 dark:bg-amber-600 text-white shadow-md'
+                                : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                                 } disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
                             {label}
@@ -101,6 +121,7 @@ export function GoldPriceChart({ visible = true }: GoldPriceChartProps) {
                             />
                             <YAxis
                                 yAxisId="left"
+                                domain={['auto', 'auto']}
                                 tick={{ fontSize: 12 }}
                                 stroke="#f59e0b"
                                 label={{ value: 'USD/oz', angle: -90, position: 'insideLeft', style: { fontSize: 12 } }}
@@ -108,6 +129,7 @@ export function GoldPriceChart({ visible = true }: GoldPriceChartProps) {
                             <YAxis
                                 yAxisId="right"
                                 orientation="right"
+                                domain={['auto', 'auto']}
                                 tick={{ fontSize: 12 }}
                                 stroke="#3b82f6"
                                 label={{ value: 'triệu VND', angle: 90, position: 'insideRight', style: { fontSize: 12 } }}
@@ -153,17 +175,10 @@ export function GoldPriceChart({ visible = true }: GoldPriceChartProps) {
                 <div className="flex items-start gap-2">
                     <span className="font-semibold">Nguồn dữ liệu:</span>
                     <div className="flex-1">
-                        {(selectedRange === '1W' || selectedRange === '1M') ? (
-                            <span className="inline-flex items-center gap-1">
-                                <span className="text-green-600">✅</span>
-                                <span>Real-time API (vang.today) - Dữ liệu thực tế 100%</span>
-                            </span>
-                        ) : (
-                            <span className="inline-flex items-center gap-1">
-                                <span className="text-blue-600">⚡</span>
-                                <span>Hybrid Data - Giá quốc tế (FreeGoldAPI) + Giá trong nước ước lượng</span>
-                            </span>
-                        )}
+                        <span className="inline-flex items-center gap-1">
+                            <span className="text-green-600">✅</span>
+                            <span>Real-time API (vang.today) - Dữ liệu thực tế 100% {selectedRange === 'All' ? '(Lịch sử đầy đủ)' : ''}</span>
+                        </span>
                     </div>
                 </div>
                 <div className="mt-2 text-xs">

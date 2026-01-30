@@ -1,6 +1,7 @@
 'use server';
 
 import { Decimal } from 'decimal.js';
+import { RPD_LUONG_TO_OUNCE_RATIO } from '@/domain/constants';
 
 export interface DomesticPrice {
     source: string;
@@ -15,7 +16,8 @@ export interface MarketData {
     lastUpdated: string;
 }
 
-export async function fetchMarketData(): Promise<MarketData> {
+// Version 3: Fixed units and simplified architecture
+export async function fetchMarketDataV3(): Promise<MarketData> {
     const data: MarketData = {
         goldPriceUSD: null,
         fxRateVND: null,
@@ -24,9 +26,11 @@ export async function fetchMarketData(): Promise<MarketData> {
     };
 
     try {
+        console.log('[MARKET DATA V3] API Call Started');
         // 1. Fetch Gold Prices (International + Domestic)
         // Source: vang.today
-        const goldRes = await fetch('https://www.vang.today/api/prices', { next: { revalidate: 300 } });
+        const goldRes = await fetch('https://www.vang.today/api/prices', { cache: 'no-store' });
+
         if (goldRes.ok) {
             const goldJson = await goldRes.json();
             const prices = goldJson.prices;
@@ -34,7 +38,183 @@ export async function fetchMarketData(): Promise<MarketData> {
             if (prices) {
                 // International
                 if (prices['XAUUSD']) {
-                    data.goldPriceUSD = prices['XAUUSD'].buy; // Convention: Spot Price is often 'buy'/mid
+                    // FIX: User confirmed raw value (~5185) is expected. 
+                    // Removing incorrect Tael -> Ounce conversion.
+                    data.goldPriceUSD = prices['XAUUSD'].buy;
+                }
+
+                // Domestic
+                const sources = [
+                    { key: 'VNGSJC', label: 'SJC' },
+                    { key: 'DOHNL', label: 'DOJI' },
+                    { key: 'PQHNVM', label: 'PNJ' }
+                ];
+
+                for (const src of sources) {
+                    const item = prices[src.key];
+                    if (item) {
+                        data.domesticPrices.push({
+                            source: src.label,
+                            buy: item.buy,
+                            sell: item.sell
+                        });
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Failed to fetch Gold Price", e);
+    }
+
+    try {
+        // 2. Fetch FX Rate
+        const fxRes = await fetch('https://api.exchangerate-api.com/v4/latest/USD', { next: { revalidate: 3600 } });
+        if (fxRes.ok) {
+            const fxJson = await fxRes.json();
+            if (fxJson.rates && fxJson.rates.VND) {
+                data.fxRateVND = fxJson.rates.VND;
+            }
+        }
+    } catch (e) {
+        console.error("Failed to fetch FX Rate", e);
+    }
+
+    return data;
+}
+
+// ============================================
+// Historical Gold Price Data (Chart Feature)
+// ============================================
+
+export interface HistoricalDataPoint {
+    timestamp: string; // ISO format
+    goldPriceUSD: number;
+    domesticAvgVND: number;
+}
+
+/**
+ * Fetches historical gold price data for chart visualization
+ * Version 3: Unified approach using vang.today for ALL ranges
+ */
+export async function fetchHistoricalGoldDataV3(range: string = '1M'): Promise<HistoricalDataPoint[]> {
+    'use server';
+
+    const daysMap: Record<string, number> = {
+        '1W': 7,
+        '1M': 30,
+        '3M': 90,
+        '6M': 180,
+        '1Y': 365,
+        '3Y': 1095,
+        '5Y': 1825,
+        'All': 3650,
+    };
+
+    const days = daysMap[range] || 30;
+
+    console.log(`[HISTORICAL DATA V3] Fetching ${range} (${days} days) from vang.today`);
+
+    try {
+        // Fetch historical data from vang.today API
+        const fetchOptions = {
+            cache: 'no-store' as RequestCache,
+            signal: AbortSignal.timeout(15000)
+        };
+
+        const [goldResponse, domesticResponse] = await Promise.all([
+            fetch(`https://www.vang.today/api/prices?type=XAUUSD&days=${days}`, fetchOptions),
+            fetch(`https://www.vang.today/api/prices?type=VNGSJC&days=${days}`, fetchOptions)
+        ]);
+
+        if (!goldResponse.ok || !domesticResponse.ok) {
+            throw new Error(`API error: Gold ${goldResponse.status}, Domestic ${domesticResponse.status}`);
+        }
+
+        const goldData = await goldResponse.json();
+        const domesticData = await domesticResponse.json();
+
+        // Transform API response to HistoricalDataPoint[]
+        const data: HistoricalDataPoint[] = [];
+
+        if (goldData.success && goldData.history && Array.isArray(goldData.history)) {
+            const domesticMap = new Map<string, number>();
+
+            // Map domestic data
+            if (domesticData.success && domesticData.history && Array.isArray(domesticData.history)) {
+                for (const entry of domesticData.history) {
+                    const price = entry.prices?.VNGSJC?.buy || entry.prices?.VNGSJC?.sell;
+                    if (price) domesticMap.set(entry.date, price);
+                }
+            }
+
+            // Merge data
+            for (const entry of goldData.history) {
+                const goldPrice = entry.prices?.XAUUSD?.buy || entry.prices?.XAUUSD?.sell;
+                const domesticPrice = domesticMap.get(entry.date);
+
+                if (goldPrice) {
+                    // If domestic missing for a day, use last known or 0 (chart handles gaps)
+                    // For now, only push if both exist or allow partial? 
+                    // Let's rely on goldPrice being the anchor.
+
+                    data.push({
+                        timestamp: new Date(entry.date).toISOString(),
+                        goldPriceUSD: goldPrice, // Raw value per user request
+                        domesticAvgVND: domesticPrice || 0
+                    });
+                }
+            }
+        }
+
+        if (data.length > 0) {
+            console.log(`[HISTORICAL V3] Returning ${data.length} data points`);
+            return data.reverse(); // Newest first from API -> Oldest first for chart
+        }
+
+        throw new Error('No valid data points found');
+
+    } catch (error) {
+        console.error('[HISTORICAL V3] Fetch failed:', error);
+        return []; // Return empty to indicate failure (Frontend handle? Or fallback?)
+        // decided to return empty and let UI show "No Data" or handle it, 
+        // to avoid "Fake" data complaint.
+    }
+}
+export interface MarketData {
+    goldPriceUSD: number | null;
+    fxRateVND: number | null;
+    domesticPrices: DomesticPrice[];
+    lastUpdated: string;
+}
+
+export async function fetchMarketDataV2(): Promise<MarketData> {
+    const data: MarketData = {
+        goldPriceUSD: null,
+        fxRateVND: null,
+        domesticPrices: [],
+        lastUpdated: new Date().toISOString(),
+    };
+
+    try {
+        console.log('[MARKET DATA] API Call Started');
+        // 1. Fetch Gold Prices (International + Domestic)
+        // Source: vang.today
+        const goldRes = await fetch('https://www.vang.today/api/prices', { cache: 'no-store' }); // Disable cache for debug
+        console.log('[MARKET DATA] Gold API Status:', goldRes.status);
+
+        if (goldRes.ok) {
+            const goldJson = await goldRes.json();
+            // console.log('[MARKET DATA] Gold JSON:', JSON.stringify(goldJson).substring(0, 100));
+            const prices = goldJson.prices;
+
+            if (prices) {
+                // International
+                if (prices['XAUUSD']) {
+                    // CRITICAL FIX: vang.today "XAUUSD" returns Vietnamese gold price in USD
+                    // which is actually LUONG (tael) price ~$5500, NOT ounce price ~$2700
+                    // Convert LUONG → OUNCE by dividing by 1.20565
+                    const rawPrice = prices['XAUUSD'].buy;
+                    data.goldPriceUSD = rawPrice / RPD_LUONG_TO_OUNCE_RATIO.toNumber();
                 }
 
                 // Domestic
@@ -101,9 +281,14 @@ export async function fetchHistoricalGoldData(range: string = '1M'): Promise<His
         '3M': 90,
         '6M': 180,
         '1Y': 365,
+        '3Y': 1095,   // 3 years
+        '5Y': 1825,   // 5 years  
+        'All': 3650,  // 10 years (performance optimized)
     };
 
     const days = daysMap[range] || 30;
+
+    console.log(`[HISTORICAL DATA] Fetching ${range} (${days} days) - ${days > 30 ? 'Hybrid mode' : 'Real API mode'}`);
 
     // Phase 2.1: For ranges >30 days, use hybrid approach
     if (days > 30) {
@@ -143,23 +328,40 @@ export async function fetchHistoricalGoldData(range: string = '1M'): Promise<His
     }
 
     // Phase 2: For ranges ≤30 days, use real vang.today API
+    console.log('[HISTORICAL DATA] Attempting vang.today API fetch...');
     try {
         // Fetch historical data from vang.today API
+        const fetchOptions = {
+            cache: 'no-store' as RequestCache, // Force fresh data
+            signal: AbortSignal.timeout(10000) // 10s timeout
+        };
+
+        console.log('[API] Calling vang.today XAUUSD and VNGSJC endpoints...');
         const [goldResponse, domesticResponse] = await Promise.all([
-            fetch(`https://www.vang.today/api/prices?type=XAUUSD&days=${days}`, {
-                next: { revalidate: 3600 } // Cache for 1 hour
+            fetch(`https://www.vang.today/api/prices?type=XAUUSD&days=${days}`, fetchOptions).catch(err => {
+                console.error('[API ERROR] XAUUSD fetch failed:', err.message);
+                throw err;
             }),
-            fetch(`https://www.vang.today/api/prices?type=VNGSJC&days=${days}`, {
-                next: { revalidate: 3600 }
+            fetch(`https://www.vang.today/api/prices?type=VNGSJC&days=${days}`, fetchOptions).catch(err => {
+                console.error('[API ERROR] VNGSJC fetch failed:', err.message);
+                throw err;
             })
         ]);
 
+        console.log('[API] Response status - XAUUSD:', goldResponse.status, 'VNGSJC:', domesticResponse.status);
+
         if (!goldResponse.ok || !domesticResponse.ok) {
-            throw new Error('API response not ok');
+            console.error('[API ERROR] Bad response:', {
+                gold: { ok: goldResponse.ok, status: goldResponse.status },
+                domestic: { ok: domesticResponse.ok, status: domesticResponse.status }
+            });
+            throw new Error(`API response not ok - Gold: ${goldResponse.status}, Domestic: ${domesticResponse.status}`);
         }
 
         const goldData = await goldResponse.json();
         const domesticData = await domesticResponse.json();
+
+        console.log('[API] Data received - Gold entries:', goldData.history?.length || 0, 'Domestic entries:', domesticData.history?.length || 0);
 
         // Transform API response to HistoricalDataPoint[]
         const data: HistoricalDataPoint[] = [];
@@ -178,16 +380,27 @@ export async function fetchHistoricalGoldData(range: string = '1M'): Promise<His
 
             // Process gold data and merge with domestic
             for (const entry of goldData.history) {
-                const goldPrice = entry.prices?.XAUUSD?.buy || entry.prices?.XAUUSD?.sell;
+                const goldPriceRaw = entry.prices?.XAUUSD?.buy || entry.prices?.XAUUSD?.sell;
                 const domesticPrice = domesticMap.get(entry.date);
 
-                if (goldPrice && domesticPrice) {
+                if (goldPriceRaw && domesticPrice) {
+                    // CRITICAL FIX: vang.today "XAUUSD" returns Vietnamese gold price in USD
+                    // which is actually LUONG (tael) price ~$5500, NOT ounce price ~$2700
+                    // Convert LUONG → OUNCE by dividing by 1.20565
+                    const goldPriceUSD = goldPriceRaw / RPD_LUONG_TO_OUNCE_RATIO.toNumber();
+
+                    console.log('[DATA CONVERSION]', {
+                        raw: goldPriceRaw,
+                        converted: goldPriceUSD,
+                        ratio: RPD_LUONG_TO_OUNCE_RATIO.toNumber()
+                    });
+
                     // Convert date string to ISO timestamp
                     const timestamp = new Date(entry.date).toISOString();
 
                     data.push({
                         timestamp,
-                        goldPriceUSD: goldPrice,
+                        goldPriceUSD,
                         domesticAvgVND: domesticPrice
                     });
                 }
@@ -196,14 +409,22 @@ export async function fetchHistoricalGoldData(range: string = '1M'): Promise<His
 
         // If we got valid data, return it (newest first)
         if (data.length > 0) {
+            console.log(`[HISTORICAL DATA] ✅ SUCCESS: Returning ${data.length} real data points from vang.today`);
+            console.log('[DATA SAMPLE]', {
+                first: { date: data[0].timestamp, gold: data[0].goldPriceUSD },
+                last: { date: data[data.length - 1].timestamp, gold: data[data.length - 1].goldPriceUSD }
+            });
             return data.reverse(); // API returns newest first, we want oldest first
         }
 
         // If no valid data, fall back to demo
+        console.warn('[HISTORICAL DATA] ⚠️ No valid data points merged, falling back to demo');
         throw new Error('No valid data from API');
 
     } catch (error) {
-        console.error('Failed to fetch historical data from vang.today, using demo data:', error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('[HISTORICAL DATA] ❌ FAILED - Using demo data fallback. Error:', errorMsg);
+        console.error('[ERROR STACK]', error);
         return generateDemoData(range, days);
     }
 }
